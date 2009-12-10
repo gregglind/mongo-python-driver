@@ -47,7 +47,7 @@ class TestComapreUpdate(unittest.TestCase):
         samelen = len(m1) == len(m2)
         self.assert_(samelen)
         # these bytes are the random request id
-        not_same = [4,5,6,7,73,74,75,76]
+        not_same = [4,5,6,7,73,74,75,76]  # bytes for the request id, from RNG
         bytes_same = [b1 == b2 for (ii,(b1,b2)) in enumerate(zip(m1,m2)) \
                         if ii not in not_same]
         sameish = False not in bytes_same  # since we don't have "all" in py2.4
