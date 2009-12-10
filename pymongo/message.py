@@ -95,6 +95,9 @@ def update(collection_name, upsert, multi, spec, doc, safe):
     else:
         return __pack_message(2001, data)
 
+if _use_c:
+    _update_py = update  # keep the python version around for testing / debugging
+    update = _cbson._update_message
 
 def query(options, collection_name,
           num_to_skip, num_to_return, query, field_selector=None):
