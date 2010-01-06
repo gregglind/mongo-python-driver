@@ -7,6 +7,7 @@
    .. autoclass:: pymongo.connection.Connection([host='localhost'[, port=27017[, pool_size=1[, auto_start_request=True[, timeout=1.0[, slave_okay=False[, network_timeout=None]]]]]]])
 
       .. automethod:: paired(left[, right=('localhost', 27017)[, pool_size=1[, auto_start_request=True]]])
+      .. automethod:: disconnect
 
       .. describe:: c[db_name] || c.db_name
 
@@ -14,8 +15,8 @@
 
          Raises :class:`~pymongo.errors.InvalidName` if an invalid database name is used.
 
-      .. automethod:: host
-      .. automethod:: port
+      .. autoattribute:: host
+      .. autoattribute:: port
       .. autoattribute:: slave_okay
       .. automethod:: database_names
       .. automethod:: drop_database

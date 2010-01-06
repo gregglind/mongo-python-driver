@@ -21,7 +21,9 @@ to a replica pair use :meth:`~Connection.paired`.
    master-slave clusters.
 
 To get a :class:`~pymongo.database.Database` instance from a
-:class:`Connection` use either dictionary-style or attribute-style access::
+:class:`Connection` use either dictionary-style or attribute-style access:
+
+.. doctest::
 
   >>> from pymongo import Connection
   >>> c = Connection()
@@ -104,9 +106,12 @@ class Connection(object): # TODO support auth for pooling
             perform queries on a slave instance
           - `timeout` (optional): max time to wait when attempting to acquire a
             connection from the connection pool before raising an exception -
-            can be set to -1 to wait indefinitely
+            can be set to ``-1`` to wait indefinitely
           - `network_timeout` (optional): timeout (in seconds) to use for socket
             operations - default is no timeout
+
+        .. versionadded:: 1.1
+           The `network_timeout` parameter.
         """
         if host is None:
             host = self.HOST
@@ -211,7 +216,7 @@ class Connection(object): # TODO support auth for pooling
 
         Return a tuple (host, port).
         """
-        result = self["admin"]._command({"ismaster": 1}, sock=sock)
+        result = self["admin"].command({"ismaster": 1}, _sock=sock)
 
         if result["ismaster"] == 1:
             return True
@@ -280,17 +285,25 @@ class Connection(object): # TODO support auth for pooling
         if index_name in self.__index_cache[database_name][collection_name]:
             del self.__index_cache[database_name][collection_name][index_name]
 
-    # TODO these really should be properties... Could be ugly to make that
-    # backwards compatible though...
     def host(self):
-        """Get the connection's current host.
+        """Current connected host.
+
+        .. versionchanged:: 1.3
+           ``host`` is now a property rather than a method. The ``host()``
+           method is deprecated.
         """
-        return self.__host
+        return helpers.callable_value(self.__host, "Connection.host")
+    host = property(host)
 
     def port(self):
-        """Get the connection's current port.
+        """Current connected port.
+
+        .. versionchanged:: 1.3
+           ``port`` is now a property rather than a method. The ``port()``
+           method is deprecated.
         """
-        return self.__port
+        return helpers.callable_value(self.__port, "Connection.port")
+    port = property(port)
 
     def slave_okay(self):
         """Is it okay for this connection to connect directly to a slave?
@@ -301,7 +314,7 @@ class Connection(object): # TODO support auth for pooling
     def __find_master(self):
         """Create a new socket and use it to figure out who the master is.
 
-        Sets __host and __port so that `host()` and `port()` will return the
+        Sets __host and __port so that :attr:`host` and :attr:`port` will return the
         address of the master.
         """
         _logger.debug("finding master")
@@ -360,7 +373,7 @@ class Connection(object): # TODO support auth for pooling
 
         Connect to the master if this is a paired connection.
         """
-        if self.host() is None or self.port() is None:
+        if self.__host is None or self.__port is None:
             self.__find_master()
         _logger.debug("connecting socket %s..." % socket_number)
 
@@ -372,25 +385,22 @@ class Connection(object): # TODO support auth for pooling
                                                      socket.TCP_NODELAY, 1)
             sock = self.__sockets[socket_number]
             sock.settimeout(_CONNECT_TIMEOUT)
-            sock.connect((self.host(), self.port()))
+            sock.connect((self.__host, self.__port))
             sock.settimeout(self.__network_timeout)
             _logger.debug("connected")
             return
         except socket.error:
             raise ConnectionFailure("could not connect to %r" % self.__nodes)
 
-    def _reset(self):
-        """Reset everything and start connecting again.
+    def disconnect(self):
+        """Disconnect from MongoDB.
 
-        Closes all open sockets and resets them to None. Re-finds the master.
+        Disconnecting will close all underlying sockets in the
+        connection pool. If the :class:`Connection` is used again it
+        will be automatically re-opened.
 
-        This should be done in case of a connection failure or a "not master"
-        error.
+        .. versionadded:: 1.3
         """
-        if self.__currently_resetting:
-            return
-        self.__currently_resetting = True
-
         for i in range(self.__pool_size):
             # prevent all operations during the reset
             if not self.__locks[i].acquire(timeout=self.__acquire_timeout):
@@ -400,12 +410,19 @@ class Connection(object): # TODO support auth for pooling
                 self.__sockets[i].close()
                 self.__sockets[i] = None
 
-        try:
-            self.__find_master()
-        finally:
-            self.__currently_resetting = False
-            for i in range(self.__pool_size):
-                self.__locks[i].release()
+        for i in range(self.__pool_size):
+            self.__locks[i].release()
+
+    def _reset(self):
+        """Reset everything and start connecting again.
+
+        Closes all open sockets and resets them to None. Re-finds the master.
+
+        This should be done in case of a connection failure or a "not master"
+        error.
+        """
+        self.disconnect()
+        self.__find_master()
 
     def set_cursor_manager(self, manager_class):
         """Set this connection's cursor manager.
@@ -719,14 +736,14 @@ class Connection(object): # TODO support auth for pooling
     def __database_info(self):
         """Get a dictionary of (database_name: size_on_disk).
         """
-        result = self["admin"]._command({"listDatabases": 1})
+        result = self["admin"].command({"listDatabases": 1})
         info = result["databases"]
         return dict([(db["name"], db["sizeOnDisk"]) for db in info])
 
     def server_info(self):
         """Get information about the MongoDB server we're connected to.
         """
-        return self["admin"]._command({"buildinfo": 1})
+        return self.admin.command({"buildinfo": 1})
 
     def database_names(self):
         """Get a list of the names of all databases on the connected server.
@@ -746,14 +763,14 @@ class Connection(object): # TODO support auth for pooling
         """
         name = name_or_database
         if isinstance(name, Database):
-            name = name.name()
+            name = name.name
 
         if not isinstance(name, types.StringTypes):
             raise TypeError("name_or_database must be an instance of "
                             "(Database, str, unicode)")
 
         self._purge_index(name)
-        self[name]._command({"dropDatabase": 1})
+        self[name].command({"dropDatabase": 1})
 
     def __iter__(self):
         return self

@@ -14,6 +14,8 @@ MongoDB, you can start it like so:
   $ mongod
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
+   gridfs
    map_reduce
+   custom_type

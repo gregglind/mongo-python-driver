@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Test the collection module."""
+import warnings
 import unittest
 import re
 import itertools
@@ -133,8 +134,8 @@ class TestCollection(unittest.TestCase):
                          db.test.ensure_index("goodbye"))
         self.assertEqual(None, db.test.ensure_index("goodbye"))
 
-        db_name = self.db.name()
-        self.connection.drop_database(self.db.name())
+        db_name = self.db.name
+        self.connection.drop_database(self.db.name)
         self.assertEqual("goodbye_1",
                          db.test.ensure_index("goodbye"))
         self.assertEqual(None, db.test.ensure_index("goodbye"))
@@ -504,7 +505,7 @@ class TestCollection(unittest.TestCase):
 
     def test_multi_update(self):
         db = self.db
-        if not version.at_least(db.connection(), (1, 1, 3, -1)):
+        if not version.at_least(db.connection, (1, 1, 3, -1)):
             raise SkipTest()
 
         db.drop_collection("test")
@@ -531,7 +532,7 @@ class TestCollection(unittest.TestCase):
 
     def test_safe_update(self):
         db = self.db
-        v113minus = version.at_least(db.connection(), (1, 1, 3, -1))
+        v113minus = version.at_least(db.connection, (1, 1, 3, -1))
 
         db.drop_collection("test")
         db.test.create_index("x", unique=True)
@@ -570,7 +571,7 @@ class TestCollection(unittest.TestCase):
         db.test.remove({"x": 1})
         self.assertEqual(1, db.test.count())
 
-        if version.at_least(db.connection(), (1, 1, 3, -1)):
+        if version.at_least(db.connection, (1, 1, 3, -1)):
             self.assertRaises(OperationFailure, db.test.remove, {"x": 1}, safe=True)
         else: # Just test that it doesn't blow up
             db.test.remove({"x": 1}, safe=True)
@@ -588,71 +589,68 @@ class TestCollection(unittest.TestCase):
         db = self.db
         db.drop_collection("test")
 
-        def group_checker(args, expected, with_command=True):
+        def group_checker(args, expected):
             eval = db.test.group(*args)
             self.assertEqual(eval, expected)
 
-            if with_command:
-                cmd = db.test.group(*args, **{"command": True})
-                self.assertEqual(cmd, expected)
 
-
-        args = [[], {},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }"]
-        expected = []
-        group_checker(args, expected)
+        self.assertEqual([], db.test.group([], {}, {"count": 0},
+                                           "function (obj, prev) { prev.count++; }"))
 
         db.test.save({"a": 2})
         db.test.save({"b": 5})
         db.test.save({"a": 1})
 
-        args = [[], {},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }"]
-        expected = [{'count': 3}]
-        group_checker(args, expected)
+        self.assertEqual([{"count": 3}],
+                         db.test.group([], {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }"))
 
-        args = [[],
-                {"a": {"$gt": 1}},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }"]
-        expected = [{'count': 1}]
-        group_checker(args, expected)
+        self.assertEqual([{"count": 1}],
+                         db.test.group([], {"a": {"$gt": 1}}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }"))
 
         db.test.save({"a": 2, "b": 3})
 
-        args = [["a"], {},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }"]
-        # NOTE maybe we can't count on this ordering being right
-        expected = [{"a": 2, "count": 2},
-                    {"a": None, "count": 1},
-                    {"a": 1, "count": 1}]
-        group_checker(args, expected)
+        self.assertEqual([{"a": 2, "count": 2},
+                          {"a": None, "count": 1},
+                          {"a": 1, "count": 1}],
+                         db.test.group(["a"], {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }"))
 
         # modifying finalize
-        args = [["a"], {},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }",
-                "function(obj){obj.count++;}"]
-        expected = [{"a": 2, "count": 3},
-                    {"a": None, "count": 2},
-                    {"a": 1, "count": 2}]
-        group_checker(args, expected, with_command=version.at_least(db.connection(), (1, 1)))
+        self.assertEqual([{"a": 2, "count": 3},
+                          {"a": None, "count": 2},
+                          {"a": 1, "count": 2}],
+                         db.test.group(["a"], {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }",
+                                       "function (obj) { obj.count++; }"))
 
         # returning finalize
-        args = [["a"], {},
-                {"count": 0},
-                "function (obj, prev) { prev.count++; }",
-                "function(obj){ return obj.count;}"]
-        expected = [2, # a:2
-                    1, # a:None
-                    1] # a:1
-        group_checker(args, expected, with_command=version.at_least(db.connection(), (1, 1)))
+        self.assertEqual([2, 1, 1],
+                         db.test.group(["a"], {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }",
+                                       "function (obj) { return obj.count; }"))
+
+        # keyf
+        self.assertEqual([2, 2],
+                         db.test.group("function (obj) { if (obj.a == 2) { return {a: true} }; "
+                                       "return {b: true}; }", {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }",
+                                       "function (obj) { return obj.count; }"))
+
+        # no key
+        self.assertEqual([{"count": 4}],
+                         db.test.group(None, {}, {"count": 0},
+                                       "function (obj, prev) { prev.count++; }"))
+
+        warnings.simplefilter("error")
+        self.assertRaises(DeprecationWarning,
+                          db.test.group, [], {}, {"count": 0},
+                          "function (obj, prev) { prev.count++; }",
+                          command=False)
+        warnings.simplefilter("default")
 
         self.assertRaises(OperationFailure, db.test.group, [], {}, {}, "5 ++ 5")
-        self.assertRaises(OperationFailure, db.test.group, [], {}, {}, "5 ++ 5", command=True)
 
     def test_group_with_scope(self):
         db = self.db
@@ -673,7 +671,7 @@ class TestCollection(unittest.TestCase):
                                           Code(reduce_function,
                                                {"inc_value": 0.5}))[0]['count'])
 
-        if version.at_least(db.connection(), (1, 1)):
+        if version.at_least(db.connection, (1, 1)):
             self.assertEqual(2, db.test.group([], {}, {"count": 0},
                                               Code(reduce_function,
                                                    {"inc_value": 1}),
@@ -803,7 +801,7 @@ class TestCollection(unittest.TestCase):
         list(self.db.test.find(timeout=True))
 
     def test_distinct(self):
-        if not version.at_least(self.db.connection(), (1, 1)):
+        if not version.at_least(self.db.connection, (1, 1)):
             raise SkipTest()
 
         self.db.drop_collection("test")
@@ -848,7 +846,7 @@ class TestCollection(unittest.TestCase):
                              {"foo": "x" * 2 * 1024 * 1024}], safe=True)
 
     def test_map_reduce(self):
-        if not version.at_least(self.db.connection(), (1, 1, 1)):
+        if not version.at_least(self.db.connection, (1, 1, 1)):
             raise SkipTest()
 
         db = self.db

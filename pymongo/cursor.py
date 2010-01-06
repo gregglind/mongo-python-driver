@@ -38,7 +38,7 @@ class Cursor(object):
 
     def __init__(self, collection, spec, fields, skip, limit, slave_okay,
                  timeout, tailable, snapshot=False,
-                 _sock=None, _must_use_master=False):
+                 _sock=None, _must_use_master=False, _is_command=False):
         """Create a new cursor.
 
         Should not be called directly by application developers.
@@ -57,6 +57,7 @@ class Cursor(object):
         self.__hint = None
         self.__socket = _sock
         self.__must_use_master = _must_use_master
+        self.__is_command = _is_command
 
         self.__data = []
         self.__id = None
@@ -65,7 +66,10 @@ class Cursor(object):
         self.__killed = False
 
     def collection(self):
-        """Get the collection for this cursor.
+        """The :class:`~pymongo.collection.Collection` that this
+        :class:`Cursor` is iterating.
+
+        .. versionadded:: 1.1
         """
         return self.__collection
     collection = property(collection)
@@ -112,7 +116,7 @@ class Cursor(object):
         """Closes this cursor.
         """
         if self.__id and not self.__killed:
-            connection = self.__collection.database().connection()
+            connection = self.__collection.database.connection
             if self.__connection_id is not None:
                 connection.close_cursor(self.__id, self.__connection_id)
             else:
@@ -122,6 +126,8 @@ class Cursor(object):
     def __query_spec(self):
         """Get the spec to use for a query.
         """
+        if self.__is_command:
+            return self.__spec
         spec = SON({"query": self.__spec})
         if self.__ordering:
             spec["orderby"] = self.__ordering
@@ -291,7 +297,7 @@ class Cursor(object):
            :meth:`~pymongo.cursor.Cursor.__len__` was deprecated in favor of
            calling :meth:`count` with `with_limit_and_skip` set to ``True``.
         """
-        command = SON([("count", self.__collection.name()),
+        command = SON([("count", self.__collection.name),
                        ("query", self.__spec),
                        ("fields", self.__fields)])
 
@@ -301,8 +307,7 @@ class Cursor(object):
             if self.__skip:
                 command["skip"] = self.__skip
 
-        response = self.__collection.database()._command(command,
-                                                         ["ns missing"])
+        response = self.__collection.database.command(command, ["ns missing"])
         if response.get("errmsg", "") == "ns missing":
             return 0
         return int(response["n"])
@@ -326,27 +331,12 @@ class Cursor(object):
         if not isinstance(key, types.StringTypes):
             raise TypeError("key must be an instance of (str, unicode)")
 
-        command = SON([("distinct", self.__collection.name()), ("key", key)])
+        command = SON([("distinct", self.__collection.name), ("key", key)])
 
         if self.__spec:
             command["query"] = self.__spec
 
-        return self.__collection.database()._command(command)["values"]
-
-    # __len__ is deprecated (replaced with count(True)) and will be removed.
-    #
-    # The reason for this deprecation is a bit complex:
-    # list(...) calls _PyObject_LengthHint to guess how much space will be
-    # required for the returned list. That method in turn calls __len__.
-    # Therefore, calling list(...) on a Cursor instance would require at least
-    # two round trips to the database if we keep __len__ - this makes it about
-    # twice as slow as [x for x in Cursor], which isn't obvious to users.
-    # Not defining __len__ here makes performance more consistent
-    def __len__(self):
-        """DEPRECATED use :meth:`count` instead.
-        """
-        raise TypeError("Cursor.__len__ is deprecated, please use "
-                        "Cursor.count(with_limit_and_skip=True) instead")
+        return self.__collection.database.command(command)["values"]
 
     def explain(self):
         """Returns an explain plan record for this cursor.
@@ -416,14 +406,14 @@ class Cursor(object):
     def __send_message(self, message):
         """Send a query or getmore message and handles the response.
         """
-        db = self.__collection.database()
+        db = self.__collection.database
         kwargs = {"_sock": self.__socket,
                   "_must_use_master": self.__must_use_master}
         if self.__connection_id is not None:
             kwargs["_connection_to_use"] = self.__connection_id
 
-        response = db.connection()._send_message_with_response(message,
-                                                               **kwargs)
+        response = db.connection._send_message_with_response(message,
+                                                             **kwargs)
 
         if isinstance(response, types.TupleType):
             (connection_id, response) = response
@@ -435,7 +425,7 @@ class Cursor(object):
         try:
             response = helpers._unpack_response(response, self.__id)
         except AutoReconnect:
-            db.connection()._reset()
+            db.connection._reset()
             raise
         self.__id = response["cursor_id"]
 
@@ -463,7 +453,7 @@ class Cursor(object):
             # Query
             self.__send_message(
                 message.query(self.__query_options(),
-                              self.__collection.full_name(),
+                              self.__collection.full_name,
                               self.__skip, self.__limit,
                               self.__query_spec(), self.__fields))
             if not self.__id:
@@ -479,7 +469,7 @@ class Cursor(object):
                     return 0
 
             self.__send_message(
-                message.get_more(self.__collection.full_name(),
+                message.get_more(self.__collection.full_name,
                                  limit, self.__id))
 
         return len(self.__data)
@@ -488,7 +478,7 @@ class Cursor(object):
         return self
 
     def next(self):
-        db = self.__collection.database()
+        db = self.__collection.database
         if len(self.__data) or self._refresh():
             next = db._fix_outgoing(self.__data.pop(0), self.__collection)
         else:
